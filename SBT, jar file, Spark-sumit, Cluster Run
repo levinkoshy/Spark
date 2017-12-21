@@ -1,0 +1,73 @@
+import org.apache.spark.{SparkContext,SparkConf}
+//can add only 2 classes in the curly braces
+
+object DailyRevenue{
+ def main(args:Array[String]) = {
+  val conf = new SparkConf().setMaster("local").setAppName("Daily Revenue")
+  //setMaster:Execution Mode; other options-YARN,Mesos etc
+
+  val sc = new SparkContext(conf) 
+
+  val baseDir = "C:\\Users\\levi3\\OneDrive\\Documents\\CCA_175\\data-master\\retail_db\\"
+  val orders = sc.textFile(baseDir+"orders")
+  val orderItems = sc.textFile(baseDir+"order_items")
+
+  val ordersFiltered = orders.filter(x=>x.split(",")(3)== "CLOSED" || x.split(",")(3)== "COMPLETE")
+
+
+
+  val ordersFilteredMap = ordersFiltered.map(x=> (x.split(",")(0).toInt,x.split(",")(1)))
+
+
+  val orderIitemsMap = orderIitems.map(x=>(x.split(",")(1).toInt, (x.split(",")(2).toInt,x.split(",")(4).toFloat)))
+
+
+  val ordersOrderItemsJoin = ordersFilteredMap.join(orderIitemsMap)
+
+  val ordersOrderItemsJoinMap = ordersOrderItemsJoin.map(x=>((x._2._1,x._2._2._1), x._2._2._2))
+
+  val revenueByProductId = ordersOrderItemsJoinMap.reduceByKey((x,y)=>x+y)
+
+  val revenueByProductIdKV = revenueByProductId.map(x=> (x._1._2, (x._1._1,x._2)))
+
+  val productPath = "\\C:\\Users\\levi3\\OneDrive\\Documents\\CCA_175\\data-master\\retail_db\\products\\part-00000"
+  val productsRaw = scala.io.Source.fromFile(productPath).getLines.toList
+
+  val products  = sc.parallelize(productsRaw)
+
+
+  val productsMap = products.map(x=>(x.split(",")(0).toInt,x.split(",")(2)))
+
+  val revenueByProductJoin = revenueByProductIdKV.join(productsMap)
+
+  val revenueByProductJoinMap = revenueByProductJoin.map(x=>((x._2._1._1,-x._2._1._2),(x._2._1._1,x._2._1._2,x._2._2)))
+
+  val revenueByProductJoinMapSorted = revenueByProductJoinMap.sortByKey()
+
+  val finalResult = revenueByProductJoinMapSorted.map(x=>x._2._1 + "," + x._2._2 + "," + x._2._3)
+
+  val targetPath = "\\C:\\Users\\levi3\\OneDrive\\Documents\\CCA_175\\data-master\\retail_db\\daily_revenue_txt_scala"
+  
+  finalResult.saveAsTextFile(targetPath)
+
+  }
+
+}
+
+sbt "run-main DailyRevenue C:\Users\levi3\OneDrive\Documents\CCA_175\data-master\retail_db\ C:\Users\levi3\OneDrive\Documents\CCA_175\data-master\retail_db\products\part-00000 C:\Users\levi3\OneDrive\Documents\CCA_175\data-master\retail_db\daily_revenue_txt_scala local"
+
+
+spark-submit --class DailyRevenue C:\Users\levi3\IdeaProjects\retail\target\scala-2.11\retail_2.11-0.1.jar  C:\Users\levi3\OneDrive\Documents\CCA_175\data-master\retail_db\ C:\Users\levi3\OneDrive\Documents\CCA_175\data-master\retail_db\products\part-00000 C:\Users\levi3\OneDrive\Documents\CCA_175\data-master\retail_db\daily_revenue_txt_scala_Spark_Submit local
+
+
+//Running the jar file in cluster
+
+//Copying jar file from local file system to the lab server
+scp /cygdrive/c/Users/levi3/IdeaProjects/retail/target/scala-2.11/retail_2.11-0.1.jar levinkoshy@gw01.itversity.com:~
+
+spark-submit --class DailyRevenue \
+ --master yarn \
+ --conf spark.ui.port=12654 \
+ /home/levinkoshy/retail_2.11-0.1.jar \
+ /public/retail_db/ /data/retail_db/products/part-00000 /user/levinkoshy/daily_revenue_txt_scala yarn-client
+//~ => home directory 

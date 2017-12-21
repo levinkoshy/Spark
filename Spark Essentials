@@ -1,0 +1,339 @@
+spark-shell --master yarn --conf spark.ui.port=12654
+
+spark-shell=scala + spark dependencies + implicit variable sc and sqlContext
+
+//hdfs location
+
+hadoop fs -ls /public/retail_db
+
+//data usage
+hadoop fs -du -s -h /public/retail_db
+
+spark-shell --master yarn \
+   --conf spark.ui.port=12654 \
+   --num-executors 1 \
+   --executor-memory 512M
+
+//To get default configurations
+
+cd /etc/spark/conf
+vi spark-defaults.conf
+vi spark-env.sh
+
+//stop a spark context which is running
+sc.stop
+
+//initialize spark context programmatically
+import org.apache.spark.{SparkConf, SparkContext}
+
+val conf = new SparkConf().setAppName("Daily Revenue").setMaster("yarn-client")
+val sc = new SparkContext(conf)
+
+//environment details
+sc.getConf.getAll.foreach(println)
+
+
+//creating RDDs; validating the HDFS files
+hadoop fs -ls /public/retail_db/orders
+hadoop fs -tail /public/retail_db/orders/part-00000
+
+//create RDD using spark-shell
+
+
+
+//converting hdfs file to RDD
+val orders = sc.textFile("/public/retail_db/orders")
+
+//local file-system to RDD
+val productsRaw = scala.io.Source.fromFile("/data/retail_db/products/part-00000").getLines.toList
+val products  = sc.parallelize(productsRaw)
+
+orders.first
+order.take(10)
+orders.takeSample(true,100)-- 100 random records as sample
+orders.collect - will convert the distributed RDDs to a single threaded connection
+
+
+//DataFrames
+//reading from JSON
+ val ordersDF = sqlContext.read.json("/public/retail_db_json/orders")
+
+ ordersDF.show
+ ordersDF.printSchema
+ ordersDF.select("order_id", "order_date").show
+
+ sqlContext.load("/public/retail_db_json/orders", "json").show
+ //same as read
+
+val a = orders.First// creates an array of strings
+val orderDate = a(0)
+orderDate.substring(0,10)// (starting position,length of the character in the whole string)
+
+orderDate.replace('-','/')
+orderDate.indexOf('2') //index of first 2
+orderDate.indexOf('2','2')//index of second occurence of 2
+
+//Requirement- 2013-07-25 00:00:00.0->20130725 as int
+
+val Date3 = Date2.replace("-","")// replace '-' with an empty string
+
+val ordersPairedRDD = orders.map (x=> {
+ val o = x.split(",")
+	(o(0).toInt, o(1).substring(0,10).replace("-","").toInt)}
+)
+
+val orderItems = sc.textFile("/public/retail_db/order_items")
+val orderItemsRDD = orderItems.map(x => (x.split(",")(1).toInt, x))
+
+//Row-level transformation using Flat-map
+
+val l= List ("Hello", "How are you doing?", "Let's perform word count", "As part of the word count program", "we will see how many times each word repeat")
+
+val l_rdd = sc.parallelize(l)
+
+//flatmap working
+List ("Hello")
+List("How", "are", "you", "doing")
+...
+...
+It will inturn flatten out to
+Hello
+How
+are 
+you
+doing
+..
+
+val l_flatMap = l_rdd.flatMap(x=> x.split(" "))
+val wordCount = l_flatMap.map(x => (x,1)).countByKey
+//OR
+val wordCount = l_flatMap.map(x => (x,1)).reduceByKey((x,y)=>x+y)
+
+//Horizontal Filtering
+val order_filter = orders.filter(x=>x.split(",")(3)=="CLOSED" ||x.split(",")(3)=="COMPLETED")
+
+orders.filter(x=>(x.split(",")(3)=="CLOSED" ||x.split(",")(3)=="COMPLETED") && (x.split(",")(1).contains("2013-09")))
+
+OR
+
+orders.filter(x=> {
+ val o = x.split(",")
+ (o(3)=="CLOSED" || o(3)=="COMPLETED") && (o(1).contains("2013-09"))
+})
+
+
+//joining orders and order_items
+
+val orders = sc.textFile("/public/retail_db/orders")
+val orderItems = sc.textFile("/public/retail_db/order_items")
+
+val ordersMap = orders.map(x => (x.split(",")(0).toInt,x.split(",")(1).substring(0,10)))
+
+val orderItemsMap = orderItems.map (x => (x.split(",")(1).toInt,x.split(",")(4).toFloat))
+
+val ordersJoin = ordersMap.join(orderItemsMap)
+
+//Problem statement
+//Get all orders which doesnt have corresponding entries in order_items
+
+val orders = sc.textFile("/public/retail_db/orders")
+val orderItems = sc.textFile("/public/retail_db/order_items")
+
+val ordersMap = orders.map(x => (x.split(",")(0).toInt,x))
+val orderItemsMap = orderItems.map (x => (x.split(",")(1).toInt,x))
+
+val ordersLeftOuterJoin = ordersMap.leftOuterJoin(orderItemsMap)
+
+val ordersLeftOuterJoinFilter = ordersLeftOuterJoin.filter(x=> x._2._2== None) 
+
+val ordersLeftOuterJoinFilterRecords = ordersLeftOuterJoinFilter.map (x => x._2._1)
+
+------------------------------------------------------------------------------------
+val ordersRightOuterJoinFilterRecords = orderItemsMap.rightOuterJoin(ordersMap).
+ filter(x => x._2._1==None).map(x=>x._2._2)
+
+ //Aggregations using actions
+
+ val orders = sc.textFile("/public/retail_db/orders")
+ val ordersCountPerStatus = orders.map(x=>(x.split(",")(3),1)).countByKey
+
+ val orderItems = sc.textFile("/public/retail_db/order_items")
+ val revenue = orderItems.map(x=>x.split(",")(4).toFloat).reduce((x,y)=>x+y)
+
+ val maxrevenue = orderItems.map(x=>x.split(",")(4).toFloat).reduce((x,y)=>{if (x<y) y else x}) 
+
+
+//Aggregations -groupByKey
+1, (1 to 1000) -sum(1 to 1000) => 1 + 2 + 3 +....1000
+
+reduceByKey, aggregateByKey //uses combiner
+1, (1 to 1000) -sum(sum(1,250) ,sum(251, 500), sum(501,750), sum(751,1000)) 
+//There will be multiple threads/nodes/combiners performing each of the sums
+
+//groupByKey
+
+val orderItems = sc.textFile("/public/retail_db/order_items")
+//Get revenue per order_id
+//Get data in descending order by order_item_subtotal for each order_id
+
+val revenueOrderID = orderItems.map(x=>(x.split(",")(1).toInt,x.split(",")(4).toFloat))
+
+val revenueOrderIDGBK = revenueOrderID.groupByKey
+
+val l = Iterable(119.98, 400.0, 399.98, 199.95, 199.98)
+l.size
+
+val revenueOrderIDGBKSum = revenueOrderIDGBK.map(x=>(x._1,x._2.sum))
+
+val revenueOrderIDGBKSort = revenueOrderIDGBK.flatMap (x => x._2.toList.sortBy(o => -o).map(k=>(x._1,k)))
+//thus groupByKey can also be used for advanced sorting
+
+val revenueOrderIDRBK = revenueOrderID.reduceByKey((x, y) => x + y)
+
+revenueOrderIDRBK.sortByKey().take(10).foreach(println)
+val minrevenueOrderIDRBK = revenueOrderID.reduceByKey((min , revenue) => if (min>revenue) revenue else min)
+
+//aggregateByKey
+
+val revenueOrderID = orderItems.map(x=>(x.split(",")(1).toInt,x.split(",")(4).toFloat))
+
+//input (orderId,orderItemSubtotal)
+
+val revenueAndMaxRevenuePerOrderId = revenueOrderID.aggregateByKey((0.0f,0.0f))(
+ (inter,subtotal)=> (inter._1 + subtotal, if (inter._2>subtotal) inter._2 else subtotal),
+ (total,inter)=> (total._1+inter._1, if (total._2>inter._2) total._2 else inter._2)
+ )
+
+//initializing (0.0f,0.0f) is the output value type (sum,max)
+//here inter and total will be of the output value type i.e tuple
+//results of both the functions is same as output type-- tuple
+ //output :(orderId , (TotalrevenuePerOrderId , MaxRevenuePerOrderId))
+
+ //sortByKey
+ //key should be ordered => int, float etc..
+
+ val products = sc.textFile("/public/retail_db/products")
+
+ val productsPairedRDD = products.map(x=>(x.split(",")(1).toInt,x)
+
+ val productsPairedRDDSorted = productsPairedRDD.sortByKey()
+
+ //descending sort
+ val productsPairedRDDSorted = productsPairedRDD.sortByKey(false)
+
+ //using 2 fields for sorting
+
+ val productsPairedRDD = products.map(x=>((x.split(",")(1).toInt, x.split(",")(4).toFloat),x))
+//sorting - ascending values of both the keys 
+ val productsPairedRDDSorted = productsPairedRDD.sortByKey()
+
+ //to get ascending order of 1 key and descending order of the other, add a negate "-" sign in front of the key which should be in descending order
+ val productsPairedRDD = products.map(x=>((x.split(",")(1).toInt, x.split(",")(4).toFloat),x))
+val productsPairedRDDSorted = productsPairedRDD.sortByKey()
+
+
+//Ranking
+//Global using sortByKey
+
+val products = sc.textFile("/public/retail_db/products")
+
+ val productsPairedRDD = products.map(x=>(x.split(",")(4).toFloat,x)
+ val productsPairedRDDSorted = productsPairedRDD.sortByKey(false)
+ productsPairedRDDSorted.take(10).foreach(println)
+
+ //using takeOrdered
+
+ val products = sc.textFile("/public/retail_db/products")
+ val productsOrdered = products.takeOrdered(10)(Ordering[Float].reverse.on(products=>products.split(",")(4).toFloat))
+
+//Ranking by Key
+//Get top N priced products within each product category
+
+val products = sc.textFile("/public/retail_db/products")
+val productsPairedRDD = products.filter(x=>x.split(",")(4) != "").map(x=>(x.split(",")(1).toInt,x))
+
+val productsGroupByCategory = productsPairedRDD.groupByKey
+//The output is a tuple
+//first element is product category Id; second element is a collection
+
+val productsIterable = productsGroupByCategory.first._2
+
+def getTopNPricedProducts(productsIterable: Iterable[String] ,topN: Int) :Iterable[String] = {
+ val productPrices = productsIterable.map(x=>x.split(",")(4).toFloat).toSet
+ val topNPrices = productPrices.toList.sortBy(p => -p).take(topN)
+ val productSorted = productsIterable.toList.sortBy(x => -x.split(",")(4).toFloat)
+ val minOftopNPrices = topNPrices.min
+ val topNPricedProducts = productSorted.takeWhile(x => x.split(",")(4).toFloat>= minOftopNPrices)
+ topNPricedProducts
+ }
+
+//productsIterable will be the collection
+
+
+val productsGroupByCategoryMap = productsGroupByCategory.map(x => getTopNPricedProducts(x._2,5))
+val productsGroupByCategoryMap = productsGroupByCategory.flatMap(x => getTopNPricedProducts(x._2,5))
+
+
+//Set Operations
+val orders = sc.textFile("/public/retail_db/orders")
+
+//2 scenarios
+//Get all the customers who placed orders in 2013 August and September
+//Get all the unique customers who placed orders in 2013 August or September
+
+val orders201308 = orders.filter(x=>x.split(",")(1).substring(0,6) =="2013-08")
+
+val customers201308 = orders.filter(x=>x.split(",")(1). contains("2013-08")).map(x=>x.split(",")(2).toInt) 
+
+val customers201309 = orders.filter(x=>x.split(",")(1). contains("2013-09")).map(x=>x.split(",")(2).toInt)
+//Get all the customers who placed orders in 2013 August and September
+val intersectionCustomers = customers201308.intersection(customers201309)
+
+//intersection takes distinct by default
+
+//Get all the unique customers who placed orders in 2013 August or September
+val unionCustomers = customers201308.union(customers201309).distinct
+
+//Get all the customers who placed orders in 2013 August but not in September
+val 3rdCustomers = customers201308.map(c=>(c,1)).leftOuterJoin(customers201309.map(c=>(c,1))).filter(x=>x._2._2 == None)
+
+//Saving processed RDDs back to HDFS.
+
+val orders = sc.textFile("/public/retail_db/orders")
+val countByStatus = orders.map(x=>(x.split(",")(3),1)).reduceByKey((x,y)=>x+y)
+
+countByStatus.saveAsTextFile("/user/levinkoshy/order_count_by_status")
+
+//To check if the saving worked
+sc.textFile("/user/levinkoshy/order_count_by_status").collect.foreach(println)
+
+ hadoop fs -cat /user/levinkoshy/order_count_by_status/part-00000
+ hadoop fs -cat /user/levinkoshy/order_count_by_status/part*
+//To change the delimiter
+
+countByStatus.map(x=>x._1 + "\t" +x._2).saveAsTextFile("/user/levinkoshy/order_count_by_status")
+
+//Delimiters should be mentioned only when it is a text file; other file formats like json, orc, paraquet etc. (they have columns 
+//and field lengths in the metadata internally )
+
+//Compression
+// Should see config files in /etc/hadoop/conf
+//core-site.xml
+//find the compression formats supported
+
+countByStatus.saveAsTextFile("/user/levinkoshy/order_count_by_status_snappy",classOf[org.apache.hadoop.io.compress.SnappyCodec])
+
+//saving files in standard file format
+val ordersDF = sqlContext.read.json("/public/retail_db_json/orders")
+
+ordersDF.save("/user/levinkoshy/orders_parquet", "parquet")
+//2nd argument is mode
+
+sqlContext.load("/user/levinkoshy/orders_parquet", "parquet").show
+//load is the counterpart for save
+
+//write and read
+ordersDF.write.orc("/user/levinkoshy/orders_orc")
+
+sqlContext.read.orc("/user/levinkoshy/orders_orc").show
+sqlContext.load("/user/levinkoshy/orders_orc", "orc").show

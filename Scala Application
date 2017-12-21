@@ -1,0 +1,55 @@
+import org.apache.spark.{SparkContext,SparkConf}
+//can add only 2 classes in the curly braces
+
+object DailyRevenue{
+ def main(args:Array[String]) = {
+  val conf = new SparkConf().setMaster(args(3)).setAppName("Daily Revenue")
+  //setMaster:Execution Mode; other options-YARN,Mesos etc
+
+  val sc = new SparkContext(conf) 
+
+  val baseDir = args(0)
+  val orders = sc.textFile(baseDir+"orders")
+  val orderItems = sc.textFile(baseDir+"order_items")
+
+  val ordersFiltered = orders.filter(x=>x.split(",")(3)== "CLOSED" || x.split(",")(3)== "COMPLETE")
+
+
+
+  val ordersFilteredMap = ordersFiltered.map(x=> (x.split(",")(0).toInt,x.split(",")(1)))
+
+
+  val orderItemsMap = orderItems.map(x=>(x.split(",")(1).toInt, (x.split(",")(2).toInt,x.split(",")(4).toFloat)))
+
+
+  val ordersOrderItemsJoin = ordersFilteredMap.join(orderItemsMap)
+
+  val ordersOrderItemsJoinMap = ordersOrderItemsJoin.map(x=>((x._2._1,x._2._2._1), x._2._2._2))
+
+  val revenueByProductId = ordersOrderItemsJoinMap.reduceByKey((x,y)=>x+y)
+
+  val revenueByProductIdKV = revenueByProductId.map(x=> (x._1._2, (x._1._1,x._2)))
+
+  val productPath = args(1)
+  val productsRaw = scala.io.Source.fromFile(productPath).getLines.toList
+
+  val products  = sc.parallelize(productsRaw)
+
+
+  val productsMap = products.map(x=>(x.split(",")(0).toInt,x.split(",")(2)))
+
+  val revenueByProductJoin = revenueByProductIdKV.join(productsMap)
+
+  val revenueByProductJoinMap = revenueByProductJoin.map(x=>((x._2._1._1,-x._2._1._2),(x._2._1._1,x._2._1._2,x._2._2)))
+
+  val revenueByProductJoinMapSorted = revenueByProductJoinMap.sortByKey()
+
+  val finalResult = revenueByProductJoinMapSorted.map(x=>x._2._1 + "," + x._2._2 + "," + x._2._3)
+
+  val targetPath = args(2)
+  
+  finalResult.saveAsTextFile(targetPath)
+
+  }
+
+}
