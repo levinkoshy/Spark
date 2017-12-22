@@ -1,0 +1,77 @@
+val ordersRDD = sc.textFile("/public/retail_db/orders")
+//HDFS location
+
+val ordersDF = ordersRDD.map(x=> (x.split(",")(0).toInt,x.split(",")(1),x.split(",")(2).toInt,x.split(",")(3))).toDF("order_id","order_date","order_customer_id","order_status")
+
+ordersDF.show
+ordersDF.printSchema
+
+//registering it as a temp table in order to run SQL queries on top of it
+ordersDF.registerTempTable("orders")
+
+sqlContext.sql("select * from orders").show
+
+sqlContext.sql("select order_status, count(1) from orders group by order_status").show
+
+//orderItems
+val orderItemsRDD = sc.textFile("/public/retail_db/order_items")
+
+val orderItemsDF = orderItemsRDD.map(x=>(x.split(",")(0).toInt,x.split(",")(1).toInt,x.split(",")(2).toInt,x.split(",")(3).toInt,x.split(",")(4).toFloat,x.split(",")(5).toFloat)).toDF("order_item_id","order_item_order_id","order_item_product_id","order_item_quantity","order_item_subtotal","order_item_product_price")
+
+orderItemsDF.show
+
+orderItemsDF.registerTempTable("order_items")
+sqlContext.sql("select * from order_items").show
+
+val productsRaw = scala.io.Source.fromFile("/data/retail_db/products/part-00000").getLines.toList
+
+val productsRDD = sc.parallelize(productsRaw)
+
+val productsDF = productsRDD.map(x=> (x.split(",")(0).toInt,x.split(",")(2))).toDF("product_id","product_name")
+productsDF.show
+
+productsDF.registerTempTable("products")
+
+sqlContext.sql("select * from products").show
+
+
+//Join
+
+sqlContext.sql("use levinkoshy_retail_db_txt")
+
+//To set the number of tasks/threads/mappers as 2
+sqlContext.setConf("spark.sql.shuffle.partitions","2")
+sqlContext.sql(
+"select o.order_date,p.product_name,sum(oi.order_item_subtotal) dailyrevenue_per_product from orders o join order_items oi on o.order_id = oi.order_item_order_id join products p on p.product_id = oi.order_item_product_id where o.order_status IN ('CLOSED','COMPLETED')  group by o.order_date,p.product_name order by o.order_date, dailyrevenue_per_product desc").show
+
+
+//loading this data into a Hive table
+sqlContext.sql("create database levinkoshy_daily_revenue")
+sqlContext.sql("create table levinkoshy_daily_revenue.daily_revenue (order_date string,product_name string,dailyrevenue_per_product float) STORED AS orc")
+
+val dailyrevenue_per_product_DF = sqlContext.sql(
+"select o.order_date,p.product_name,sum(oi.order_item_subtotal) dailyrevenue_per_product from orders o join order_items oi on o.order_id = oi.order_item_order_id join products p on p.product_id = oi.order_item_product_id where o.order_status IN ('CLOSED','COMPLETED')  group by o.order_date,p.product_name order by o.order_date, dailyrevenue_per_product desc")
+
+dailyrevenue_per_product_DF.show
+
+dailyrevenue_per_product_DF.insertInto("levinkoshy_daily_revenue.daily_revenue")
+//also has a second boolean argument for Overwrite
+sqlContext.sql("select * from levinkoshy_daily_revenue.daily_revenue").show
+
+//DataFrame operations
+dailyrevenue_per_product_DF.save("/user/levinkoshy/daily_revenue_save","json")
+
+ hadoop fs -tail /user/levinkoshy/daily_revenue_save/part-r-00000-890587c9-592b-47c4-9f0d-669344c9f186
+dailyrevenue_per_product_DF.write.json("/user/levinkoshy/daily_revenue_write")
+
+hadoop fs -ls /user/levinkoshy/daily_revenue_write
+
+//Converting DF into rdd
+dailyrevenue_per_product_DF.rdd
+
+//select on DF
+dailyrevenue_per_product_DF.select("order_date","dailyrevenue_per_product").show
+
+//filter on DF
+dailyrevenue_per_product_DF.filter(dailyrevenue_per_product_DF("order_date")==="2013-07-25 00:00:00.0").show
+
